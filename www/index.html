@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Control de Puesto</title>
+<style>
+:root{--bg:#faf6f0;--card:#fff;--tx:#2b2118;--mut:#7a6a5c;--pri:#d9480f;--pri2:#fff;--ok:#2f9e44;--bad:#c92a2a;--bd:#eadfce;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1c1612;--card:#2a211b;--tx:#f5ece1;--mut:#b8a794;--bd:#3d3128;--pri:#ff8a4c;--pri2:#1c1612}}
+:root[data-theme="dark"]{--bg:#1c1612;--card:#2a211b;--tx:#f5ece1;--mut:#b8a794;--bd:#3d3128;--pri:#ff8a4c;--pri2:#1c1612}
+*{box-sizing:border-box}html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding-bottom:84px}
+main{max-width:640px;margin:0 auto;padding:16px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:17px;margin:20px 0 8px}
+.mut{color:var(--mut);font-size:14px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:12px 14px;margin:8px 0}
+.row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.big{font-size:26px;font-weight:700}
+button{font:inherit;border:0;border-radius:10px;padding:10px 14px;background:var(--pri);color:var(--pri2);font-weight:600;cursor:pointer}
+button.sec{background:transparent;color:var(--tx);border:1px solid var(--bd)}
+button.bad{background:var(--bad);color:#fff}
+button:disabled{opacity:.5}
+button.sm{padding:6px 10px;font-size:14px}
+input,select,textarea{font:inherit;width:100%;padding:10px;border-radius:10px;border:1px solid var(--bd);background:var(--bg);color:var(--tx)}
+label{display:block;font-size:14px;color:var(--mut);margin:10px 0 4px}
+nav{position:fixed;left:0;right:0;bottom:0;background:var(--card);border-top:1px solid var(--bd);display:flex;padding-bottom:env(safe-area-inset-bottom,0px)}
+nav button{flex:1;background:none;color:var(--mut);border-radius:0;padding:12px 2px;font-size:12px}
+nav button.on{color:var(--pri)}
+.tag{font-size:12px;padding:2px 8px;border-radius:99px;background:var(--bd)}
+.low{color:var(--bad);font-weight:700}.okc{color:var(--ok)}
+.qty{display:flex;align-items:center;gap:10px}.qty b{min-width:26px;text-align:center;font-size:18px}
+.empty{text-align:center;color:var(--mut);padding:24px 8px}
+dialog{border:0;border-radius:16px;padding:16px;width:min(92vw,460px);background:var(--card);color:var(--tx);max-height:88vh;overflow:auto}
+dialog::backdrop{background:#0008}
+#toast{position:fixed;left:50%;transform:translateX(-50%);bottom:96px;background:var(--tx);color:var(--bg);padding:10px 16px;border-radius:10px;display:none;z-index:9;max-width:90vw}
+.scroll{overflow-x:auto}
+</style>
+</head>
+<body>
+<main id="app"></main>
+<div id="toast" role="status"></div>
+<dialog id="dlg"></dialog>
+<nav id="nav"></nav>
+<script>
+const KEY='controlpuesto.v1';
+const blank=()=>({cur:'$',products:[],combos:[],sales:[],purchases:[],closes:[]});
+let S=blank(),tab='inicio';
+try{const r=localStorage.getItem(KEY);if(r)S=Object.assign(blank(),JSON.parse(r))}catch(e){}
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){toast('No se pudo guardar en este navegador')}};
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+const today=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};
+const n=v=>{const x=parseFloat(String(v).replace(',','.'));return isNaN(x)?0:x};
+const fmt=v=>Math.round(v*100)/100;
+const money=v=>S.cur+fmt(v).toLocaleString('es');
+const unit=p=>p.unit==='kg'?'kg':'pza';
+const prod=id=>S.products.find(p=>p.id===id);
+function toast(m){const t=$('toast');t.textContent=m;t.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>t.style.display='none',2600)}
+function dlg(html){const d=$('dlg');d.innerHTML=html;d.showModal()}
+const closeDlg=()=>$('dlg').close();
+
+const TABS=[['inicio','🏠','Inicio'],['vender','🌭','Vender'],['comprar','🛒','Comprar'],['catalogo','📦','Catálogo'],['cierre','🧾','Cierre'],['reportes','📊','Reportes']];
+function nav(){ $('nav').innerHTML=TABS.map(t=>`<button class="${tab===t[0]?'on':''}" onclick="go('${t[0]}')"><div style="font-size:20px">${t[1]}</div>${t[2]}</button>`).join('') }
+function go(t){tab=t;render();scrollTo(0,0)}
+function render(){nav();$('app').innerHTML=({inicio,vender,comprar,catalogo,cierre,reportes})[tab]()}
+
+/* ---------- INICIO ---------- */
+function todaySales(){return S.sales.filter(s=>s.date===today())}
+function inicio(){
+  const ts=todaySales(),rev=ts.reduce((a,s)=>a+s.amount,0);
+  const low=S.products.filter(p=>p.stock<=p.min);
+  let h=`<h1>🌭 Control de Puesto</h1><div class="mut">Hoy, ${today()}</div>
+  <div class="grid"><div class="card"><div class="mut">Vendido hoy</div><div class="big">${money(rev)}</div></div>
+  <div class="card"><div class="mut">Ventas registradas</div><div class="big">${ts.reduce((a,s)=>a+s.qty,0)}</div></div></div>`;
+  if(!S.products.length) return h+`<div class="card empty">Aún no hay productos.<br>Crea el primero en <b>Catálogo</b> o carga datos de ejemplo.<br><br><button onclick="demo()">Cargar datos de ejemplo</button></div>`+extras();
+  h+=`<h2>Qué comprar</h2>`;
+  h+=low.length?low.map(p=>`<div class="card row"><span>${esc(p.name)}</span><span class="low">${fmt(p.stock)} ${unit(p)} (mín. ${p.min})</span></div>`).join(''):`<div class="card okc">Todo el stock está por encima del mínimo ✓</div>`;
+  h+=`<h2>Stock actual</h2>`+S.products.map(p=>`<div class="card row"><span>${esc(p.name)}</span><b class="${p.stock<=p.min?'low':''}">${fmt(p.stock)} ${unit(p)}</b></div>`).join('');
+  return h+extras();
+}
+function extras(){
+  const sales=S.closes.slice().reverse().slice(0,10);
+  let h=`<h2>Historial de cierres</h2>`;
+  h+=sales.length?sales.map(c=>`<div class="card"><div class="row"><b>${c.date}</b><b>${money(c.revenue)}</b></div><div class="mut">Ganancia estimada: ${money(c.profit)} · Diferencias: ${c.diffs.length}</div></div>`).join(''):`<div class="empty">Aún no hay cierres. Cierra tu primer día en la pestaña Cierre.</div>`;
+  h+=`<h2>Copia de seguridad</h2><div class="card"><div class="mut">Copia este texto y guárdalo (ej. en notas o WhatsApp). Para restaurar, pégalo abajo.</div>
+  <textarea id="bk" rows="3" readonly onclick="this.select()">${esc(JSON.stringify(S))}</textarea>
+  <label>Restaurar copia</label><textarea id="rs" rows="2" placeholder="Pega aquí tu copia"></textarea>
+  <div class="row" style="margin-top:8px"><button class="sec sm" onclick="restore()">Restaurar</button><button class="sec sm" onclick="setCur()">Cambiar moneda (${esc(S.cur)})</button></div>
+  <div style="margin-top:8px"><button class="bad sm" onclick="wipe()">Borrar todos los datos</button></div></div>`;
+  return h;
+}
+function restore(){try{const o=JSON.parse($('rs').value);if(!o.products||!o.combos)throw 0;S=Object.assign(blank(),o);save();render();toast('Copia restaurada')}catch(e){toast('El texto no es una copia válida')}}
+function setCur(){const c=prompt('Símbolo de moneda (ej. $, Bs, S/)',S.cur);if(c){S.cur=c.slice(0,4);save();render()}}
+function wipe(){if(confirm('¿Borrar TODOS los datos? Esta acción no se puede deshacer.')){S=blank();save();render()}}
+function demo(){
+  const P=(name,unit,cost,price,min,stock)=>({id:uid(),name,unit,cost,price,min,stock});
+  const pan=P('Pan','pza',0.3,0,20,100),sal=P('Salchicha','pza',0.5,0,20,100),ref=P('Refresco','pza',0.6,1.5,10,48),mal=P('Malta','pza',0.7,1.5,10,36),que=P('Queso rallado','kg',6,0,0.5,3),rep=P('Repollo','kg',1,0,1,5);
+  S.products=[pan,sal,ref,mal,que,rep];
+  const it=(p,q)=>({pid:p.id,qty:q});
+  S.combos=[{id:uid(),name:'Perro Sencillo',price:2,items:[it(pan,1),it(sal,1)]},{id:uid(),name:'Combo Doble',price:5,items:[it(pan,2),it(sal,2),it(ref,1)]},{id:uid(),name:'Combo Malta',price:4,items:[it(pan,1),it(sal,1),it(mal,1)]}];
+  save();render();toast('Datos de ejemplo cargados')
+}
+
+/* ---------- CATÁLOGO ---------- */
+function catalogo(){
+  let h=`<div class="row"><h1>Catálogo</h1></div><div class="row"><h2>Productos</h2><button class="sm" onclick="prodForm()">+ Nuevo</button></div>`;
+  h+=S.products.length?S.products.map(p=>`<div class="card"><div class="row"><b>${esc(p.name)}</b><span class="tag">${unit(p)}</span></div>
+  <div class="mut">Stock ${fmt(p.stock)} · Mín. ${p.min} · Costo ${money(p.cost)} · ${p.price>0?'Venta suelta '+money(p.price):'No se vende suelto'}</div>
+  <div style="margin-top:8px"><button class="sec sm" onclick="prodForm('${p.id}')">Editar</button> <button class="sec sm" onclick="delProd('${p.id}')">Eliminar</button></div></div>`).join(''):`<div class="empty">Aún no hay productos. Crea el primero para comenzar.</div>`;
+  h+=`<div class="row"><h2>Combos</h2><button class="sm" onclick="comboForm()">+ Nuevo</button></div>`;
+  h+=S.combos.length?S.combos.map(c=>`<div class="card"><div class="row"><b>${esc(c.name)}</b><b>${money(c.price)}</b></div>
+  <div class="mut">${c.items.map(i=>{const p=prod(i.pid);return p?`${i.qty} ${esc(p.name)}`:''}).filter(Boolean).join(' + ')}</div>
+  <div style="margin-top:8px"><button class="sec sm" onclick="comboForm('${c.id}')">Editar</button> <button class="sec sm" onclick="delCombo('${c.id}')">Eliminar</button></div></div>`).join(''):`<div class="empty">Aún no hay combos. ${S.products.length?'Crea el primero.':'Primero agrega productos.'}</div>`;
+  return h;
+}
+function prodForm(id){
+  const p=id?prod(id):{name:'',unit:'pza',cost:'',price:'',min:0,stock:0};
+  dlg(`<h2>${id?'Editar':'Nuevo'} producto</h2>
+  <label>Nombre</label><input id="f_n" value="${esc(p.name)}" placeholder="Ej. Salchicha">
+  <label>Se mide en</label><select id="f_u"><option value="pza" ${p.unit==='pza'?'selected':''}>Unidades (pza)</option><option value="kg" ${p.unit==='kg'?'selected':''}>Kilogramos (kg)</option></select>
+  <label>Costo por unidad/kg</label><input id="f_c" inputmode="decimal" value="${p.cost}">
+  <label>Precio de venta suelto (déjalo vacío si no se vende solo)</label><input id="f_p" inputmode="decimal" value="${p.price||''}">
+  <label>Avisar cuando quede (stock mínimo)</label><input id="f_m" inputmode="decimal" value="${p.min}">
+  ${id?'':`<label>Stock inicial</label><input id="f_s" inputmode="decimal" value="${p.stock}">`}
+  <div class="row" style="margin-top:14px"><button class="sec" onclick="closeDlg()">Cancelar</button><button onclick="saveProd('${id||''}')">Guardar</button></div>`);
+}
+function saveProd(id){
+  const name=$('f_n').value.trim();if(!name)return toast('Escribe el nombre del producto');
+  if(S.products.some(p=>p.id!==id&&p.name.toLowerCase()===name.toLowerCase()))return toast('Ya existe un producto con ese nombre');
+  const d={name,unit:$('f_u').value,cost:n($('f_c').value),price:n($('f_p').value),min:n($('f_m').value)};
+  if([d.cost,d.price,d.min].some(x=>x<0))return toast('No se permiten números negativos');
+  if(id)Object.assign(prod(id),d);else S.products.push({id:uid(),stock:Math.max(0,n($('f_s').value)),...d});
+  save();closeDlg();render();toast('Producto guardado')
+}
+function delProd(id){
+  if(S.combos.some(c=>c.items.some(i=>i.pid===id)))return toast('Está dentro de un combo. Quítalo del combo primero');
+  if(confirm('¿Eliminar este producto?')){S.products=S.products.filter(p=>p.id!==id);save();render()}
+}
+function comboForm(id){
+  if(!S.products.length)return toast('Primero crea productos');
+  const c=id?S.combos.find(x=>x.id===id):{name:'',price:'',items:[]};
+  dlg(`<h2>${id?'Editar':'Nuevo'} combo</h2>
+  <label>Nombre</label><input id="c_n" value="${esc(c.name)}" placeholder="Ej. Combo Doble">
+  <label>Precio de venta</label><input id="c_p" inputmode="decimal" value="${c.price}">
+  <label>Cantidad de cada producto que lleva</label>
+  ${S.products.map(p=>{const it=c.items.find(i=>i.pid===p.id);return `<div class="row" style="margin:6px 0"><span>${esc(p.name)} <span class="mut">(${unit(p)})</span></span><input style="width:90px" data-pid="${p.id}" inputmode="decimal" value="${it?it.qty:''}" placeholder="0"></div>`}).join('')}
+  <div class="row" style="margin-top:14px"><button class="sec" onclick="closeDlg()">Cancelar</button><button onclick="saveCombo('${id||''}')">Guardar</button></div>`);
+}
+function saveCombo(id){
+  const name=$('c_n').value.trim(),price=n($('c_p').value);
+  const items=[...document.querySelectorAll('[data-pid]')].map(e=>({pid:e.dataset.pid,qty:n(e.value)})).filter(i=>i.qty>0);
+  if(!name)return toast('Escribe el nombre del combo');
+  if(price<=0)return toast('Pon un precio mayor a 0');
+  if(!items.length)return toast('El combo necesita al menos un producto');
+  if(id)Object.assign(S.combos.find(x=>x.id===id),{name,price,items});else S.combos.push({id:uid(),name,price,items});
+  save();closeDlg();render();toast('Combo guardado')
+}
+function delCombo(id){if(confirm('¿Eliminar este combo?')){S.combos=S.combos.filter(c=>c.id!==id);save();render()}}
+
+/* ---------- COMPRAR ---------- */
+function comprar(){
+  if(!S.products.length)return `<h1>Comprar mercancía</h1><div class="card empty">Primero crea productos en Catálogo.</div>`;
+  const rec=S.purchases.slice().reverse().slice(0,8);
+  return `<h1>Comprar mercancía</h1><div class="mut">La cantidad se suma al stock actual.</div>
+  <div class="card"><label>Producto</label><select id="b_p" onchange="buyHint()">${S.products.map(p=>`<option value="${p.id}">${esc(p.name)} (${unit(p)})</option>`).join('')}</select>
+  <div class="mut" id="b_h"></div>
+  <label>Cantidad comprada</label><input id="b_q" inputmode="decimal" placeholder="0">
+  <label>Costo total pagado (opcional)</label><input id="b_c" inputmode="decimal" placeholder="0">
+  <button style="width:100%;margin-top:12px" onclick="buy()">Agregar al stock</button></div>
+  <h2>Últimas compras</h2>`+(rec.length?rec.map(b=>{const p=prod(b.pid);return `<div class="card row"><span>${p?esc(p.name):'(eliminado)'} · ${b.date}</span><b>+${fmt(b.qty)}</b></div>`}).join(''):`<div class="empty">Aún no hay compras registradas.</div>`)+`<script>buyHint()<\/script>`;
+}
+function buyHint(){const p=prod($('b_p')?.value);if($('b_h')&&p)$('b_h').textContent='Stock actual: '+fmt(p.stock)+' '+unit(p)}
+function buy(){
+  const p=prod($('b_p').value),q=n($('b_q').value),c=n($('b_c').value);
+  if(q<=0)return toast('Escribe una cantidad mayor a 0');
+  p.stock=fmt(p.stock+q);
+  if(c>0)p.cost=fmt(c/q);
+  S.purchases.push({date:today(),pid:p.id,qty:q,cost:c});
+  save();render();toast(`Ahora hay ${fmt(p.stock)} ${unit(p)} de ${p.name}`)
+}
+
+/* ---------- VENDER ---------- */
+function applyItems(items,mult){items.forEach(i=>{const p=prod(i.pid);if(p)p.stock=fmt(p.stock-i.qty*mult)})}
+function count(type,id){return todaySales().filter(s=>s.type===type&&s.ref===id).reduce((a,s)=>a+s.qty,0)}
+function sell(type,id,d){
+  let items,price,name;
+  if(type==='combo'){const c=S.combos.find(x=>x.id===id);items=c.items;price=c.price;name=c.name}
+  else{const p=prod(id);items=[{pid:id,qty:1}];price=p.price;name=p.name}
+  if(d>0){
+    const short=items.find(i=>{const p=prod(i.pid);return p&&p.stock<i.qty});
+    if(short)toast('Aviso: no hay suficiente '+prod(short.pid).name+' en stock');
+    applyItems(items,1);S.sales.push({id:uid(),date:today(),type,ref:id,name,qty:1,amount:price});
+  }else{
+    const i=S.sales.map((s,k)=>[s,k]).reverse().find(([s])=>s.date===today()&&s.type===type&&s.ref===id);
+    if(!i)return;S.sales.splice(i[1],1);applyItems(items,-1);
+  }
+  save();render()
+}
+function vender(){
+  const loose=S.products.filter(p=>p.price>0&&p.unit==='pza');
+  if(!S.combos.length&&!loose.length)return `<h1>Ventas del día</h1><div class="card empty">Aún no hay combos ni productos sueltos con precio.<br>Créalos en Catálogo.</div>`;
+  const rev=todaySales().reduce((a,s)=>a+s.amount,0);
+  const row=(t,id,name,price,sub)=>`<div class="card row"><div><b>${esc(name)}</b><div class="mut">${money(price)}${sub?' · '+sub:''}</div></div><div class="qty"><button class="sec sm" onclick="sell('${t}','${id}',-1)">−</button><b>${count(t,id)}</b><button class="sm" onclick="sell('${t}','${id}',1)">+</button></div></div>`;
+  return `<h1>Ventas del día</h1><div class="card row"><span>Total de hoy</span><span class="big">${money(rev)}</span></div>
+  <h2>Combos</h2>${S.combos.map(c=>row('combo',c.id,c.name,c.price)).join('')||'<div class="empty">Sin combos.</div>'}
+  <h2>Productos sueltos</h2>${loose.map(p=>row('prod',p.id,p.name,p.price,'stock '+fmt(p.stock))).join('')||'<div class="empty">Ningún producto tiene precio de venta suelto.</div>'}
+  <div class="mut" style="margin-top:12px">Cada venta descuenta del stock los productos del combo. Los kg se ajustan en el cierre.</div>`;
+}
+
+/* ---------- CIERRE ---------- */
+function cierre(){
+  if(!S.products.length)return `<h1>Cierre del día</h1><div class="card empty">Primero crea productos.</div>`;
+  const ts=todaySales(),rev=ts.reduce((a,s)=>a+s.amount,0);
+  const sold={};ts.forEach(s=>sold[s.name]=(sold[s.name]||0)+s.qty);
+  return `<h1>Cierre del día</h1><div class="mut">Cuenta lo que te queda y escríbelo. Si lo dejas vacío, se asume que coincide con el sistema.</div>
+  <div class="card"><div class="row"><span>Dinero generado hoy</span><b class="big">${money(rev)}</b></div>
+  <div class="mut">${Object.entries(sold).map(([k,v])=>v+' × '+esc(k)).join(' · ')||'Aún no registraste ventas hoy.'}</div></div>
+  <h2>Conteo físico</h2>
+  ${S.products.map(p=>`<div class="card"><div class="row"><b>${esc(p.name)}</b><span class="mut">Según sistema: ${fmt(p.stock)} ${unit(p)}</span></div><input data-cnt="${p.id}" inputmode="decimal" placeholder="Quedan (${unit(p)})"></div>`).join('')}
+  <button style="width:100%;margin-top:8px" onclick="closeDay()">Cerrar el día</button>`;
+}
+function closeDay(){
+  const ts=todaySales(),revenue=ts.reduce((a,s)=>a+s.amount,0);
+  if(S.closes.some(c=>c.date===today())&&!confirm('Ya cerraste hoy. ¿Guardar otro cierre de todos modos?'))return;
+  let cost=0;const diffs=[];
+  ts.forEach(s=>{const items=s.type==='combo'?(S.combos.find(c=>c.id===s.ref)||{items:[]}).items:[{pid:s.ref,qty:1}];items.forEach(i=>{const p=prod(i.pid);if(p)cost+=p.cost*i.qty})});
+  for(const e of document.querySelectorAll('[data-cnt]')){
+    if(e.value.trim()==='')continue;
+    const v=n(e.value);if(v<0)return toast('No se permiten conteos negativos');
+    const p=prod(e.dataset.cnt),d=fmt(v-p.stock);
+    if(d!==0)diffs.push({name:p.name,unit:unit(p),expected:p.stock,counted:v,diff:d});
+    p.stock=v;
+  }
+  S.closes.push({date:today(),revenue,profit:fmt(revenue-cost),diffs});save();
+  const lines=diffs.length?diffs.map(d=>`<div class="row"><span>${esc(d.name)}</span><b class="${d.diff<0?'low':'okc'}">${d.diff>0?'+':''}${d.diff} ${d.unit}</b></div>`).join(''):'<div class="okc">Todo cuadra con el sistema ✓</div>';
+  dlg(`<h2>Día cerrado ✓</h2><div class="card"><div class="mut">Dinero generado</div><div class="big">${money(revenue)}</div><div class="mut">Ganancia estimada: ${money(revenue-cost)}</div></div>
+  <h2>Diferencias (conteo vs. sistema)</h2>${lines}<div class="mut" style="margin-top:8px">Negativo = faltó producto (merma, regalo o error).</div>
+  <button style="width:100%;margin-top:12px" onclick="closeDlg();go('inicio')">Listo</button>`);
+}
+/* ---------- REPORTES ---------- */
+let rp=7;
+const dstr=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+function saleCost(s){const it=s.type==='combo'?(S.combos.find(c=>c.id===s.ref)||{items:[]}).items:[{pid:s.ref,qty:1}];return it.reduce((a,i)=>{const p=prod(i.pid);return a+(p?p.cost*i.qty:0)},0)*s.qty}
+function setRp(v){rp=v;render()}
+function copyCsv(){const t=$('csv');t.select();const ok=()=>toast('Copiado. Pégalo en Excel o Google Sheets');try{navigator.clipboard.writeText(t.value).then(ok,()=>{document.execCommand('copy');ok()})}catch(e){document.execCommand('copy');ok()}}
+function reportes(){
+  const days=[];for(let i=rp-1;i>=0;i--){const d=new Date();d.setDate(d.getDate()-i);days.push(dstr(d))}
+  const ss=S.sales.filter(s=>days.includes(s.date));
+  const rev=ss.reduce((a,s)=>a+s.amount,0),cost=ss.reduce((a,s)=>a+saleCost(s),0);
+  const spent=S.purchases.filter(b=>days.includes(b.date)).reduce((a,b)=>a+b.cost,0);
+  const per=days.map(d=>ss.filter(s=>s.date===d).reduce((a,s)=>a+s.amount,0));
+  const mx=Math.max(...per,1),top={};
+  ss.forEach(s=>{const t=top[s.name]||(top[s.name]={q:0,m:0});t.q+=s.qty;t.m+=s.amount});
+  const tl=Object.entries(top).sort((a,b)=>b[1].m-a[1].m).slice(0,8);
+  const csv='fecha,tipo,nombre,cantidad,monto\n'+ss.map(s=>[s.date,s.type,'"'+s.name.replace(/"/g,'""')+'"',s.qty,s.amount].join(',')).join('\n');
+  const btn=(v,l)=>`<button class="${rp===v?'':'sec'} sm" onclick="setRp(${v})">${l}</button>`;
+  let h=`<h1>Reportes</h1><div class="row" style="justify-content:flex-start">${btn(1,'Hoy')}${btn(7,'7 días')}${btn(30,'30 días')}</div>
+  <div class="grid" style="margin-top:8px"><div class="card"><div class="mut">Ingresos</div><div class="big">${money(rev)}</div></div>
+  <div class="card"><div class="mut">Ganancia estimada</div><div class="big ${rev-cost<0?'low':'okc'}">${money(rev-cost)}</div></div>
+  <div class="card"><div class="mut">Gastado en compras</div><div class="big">${money(spent)}</div></div>
+  <div class="card"><div class="mut">Ventas</div><div class="big">${ss.reduce((a,s)=>a+s.qty,0)}</div></div></div>`;
+  if(!ss.length)return h+`<div class="card empty">Aún no hay ventas en este período. Registra la primera en la pestaña Vender.</div>`;
+  h+=`<h2>Ingresos por día</h2><div class="card"><div style="display:flex;align-items:flex-end;gap:2px;height:120px">${per.map((v,i)=>`<div title="${days[i]}: ${money(v)}" style="flex:1;height:${Math.max(v?3:0,v/mx*100)}%;background:var(--pri);border-radius:3px 3px 0 0"></div>`).join('')}</div>
+  <div style="display:flex;gap:2px;font-size:10px;color:var(--mut);margin-top:4px">${days.map((d,i)=>`<div style="flex:1;text-align:center;overflow:hidden">${rp<=7||i%5===0?d.slice(8):''}</div>`).join('')}</div></div>
+  <h2>Lo más vendido</h2>${tl.map(([k,t])=>`<div class="card row"><span>${esc(k)} <span class="tag">${t.q}</span></span><b>${money(t.m)}</b></div>`).join('')}
+  <h2>Exportar a Excel</h2><div class="card"><div class="mut">Copia las ventas del período y pégalas en Excel o Google Sheets.</div><textarea id="csv" rows="3" readonly>${esc(csv)}</textarea><button class="sm" style="margin-top:8px" onclick="copyCsv()">Copiar datos</button></div>
+  <div class="mut" style="margin-top:8px">La ganancia usa el costo actual de cada producto, por eso es una estimación.</div>`;
+  return h;
+}
+render();
+</script>
+</body>
+</html>
