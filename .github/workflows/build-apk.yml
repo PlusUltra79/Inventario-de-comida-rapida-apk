@@ -18,9 +18,21 @@ jobs:
       - name: Instalar dependencias
         run: npm install
       - name: Crear proyecto Android
+        run: npx cap add android
+      - name: Ícono y pantalla de inicio (Comida Fast)
         run: |
-          npx cap add android
-          npx cap sync android
+          cp -r android-res/. android/app/src/main/res/
+          sed -i 's|<item name="android:background">@drawable/splash</item>|&<item name="windowSplashScreenBackground">@color/ic_launcher_background</item>|' android/app/src/main/res/values/styles.xml
+          grep -n "windowSplashScreenBackground" android/app/src/main/res/values/styles.xml
+          ls -la android/app/src/main/res/mipmap-xxxhdpi
+      - name: Copiar la web
+        run: npx cap sync android
+      - name: Firma fija (permite actualizar sin perder datos)
+        run: |
+          if [ -f debug.keystore ]; then
+            mkdir -p ~/.android
+            cp debug.keystore ~/.android/debug.keystore
+          fi
       - name: Compilar APK
         run: |
           cd android
@@ -29,5 +41,5 @@ jobs:
       - name: Guardar APK
         uses: actions/upload-artifact@v4
         with:
-          name: control-de-puesto-apk
+          name: comida-fast-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
